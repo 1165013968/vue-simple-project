@@ -15,12 +15,12 @@ export default {
 <style>
 #app {
   height: 100%;
-  min-width: 600px;
-  margin: 0 auto;
+  margin: 0;
   padding: 0;
+  overflow: hidden;
   color: #2c3e50;
   text-align: center;
-  font-family: 'Avenir', Helvetica, Arial, sans-serif;
+  font-family: 'Microsoft YaHei';
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }

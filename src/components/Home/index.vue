@@ -8,6 +8,7 @@
         value-format="yyyy-MM-dd"
         placeholder="选择日期"
         @change="onSelectDate"
+        size="small"
         :picker-options="startTimeRules">
       </el-date-picker>
       <span class="time-picker-interval">~</span>
@@ -16,6 +17,7 @@
         type="date"
         value-format="yyyy-MM-dd"
         placeholder="选择日期"
+        size="small"
         @change="onSelectDate">
       </el-date-picker>
     </div>
@@ -37,7 +39,11 @@
               v-if="index < tableHead.length - 1"
               :key="index"
               :prop="index.toString()"
-              :label="cols"
+              :label="cols.displayName"
+              :type="cols.fieldName"
+              :align="cols.align"
+              header-align="center"
+              className="reports-cell"
               :formatter="formatOutput">
             </el-table-column>
           </template>
@@ -48,11 +54,11 @@
 </template>
 
 <script>
+import 'babel-polyfill'
 import Vue from 'vue'
 import { DatePicker, Table, TableColumn } from 'element-ui'
 import { getDatabaseAlias, getFieldAlias, getDataBySql } from '@/api'
-import { orderList, queryArr, desp, noCollapse, formatDate, formatMoney, formatPer, FIRST_TERM_IMPAWN_DAY } from './config'
-import('babel-polyfill')
+import { orderList, queryArr, desp, noCollapse, formatDate, formatMoney, formatPer, formatNum, FIRST_TERM_IMPAWN_DAY } from './config'
 Vue.use(DatePicker)
 Vue.use(Table)
 Vue.use(TableColumn)
@@ -92,10 +98,10 @@ let resize = function (fn, timer) {
   }
 }
 
-function formatterDate (d, r = '-') {
-  if (!(d instanceof Date)) return d
-  return d.getFullYear() + r + (d.getMonth() + 1) + r + d.getDate()
-}
+// function formatterDate (d, r = '-') {
+//   if (!(d instanceof Date)) return d
+//   return d.getFullYear() + r + (d.getMonth() + 1) + r + d.getDate()
+// }
 
 function inArray (arr = [], item) {
   let idx = arr.indexOf(item)
@@ -103,17 +109,33 @@ function inArray (arr = [], item) {
   return false
 }
 
+const getValue = (arr, key, fn) => {
+  if (!arr.length) return []
+  let max = -Infinity
+  let min = Infinity
+  arr.map((item, index) => {
+    let temp = item[key]
+    if (fn) temp = fn(temp)
+    if (temp !== 0 && temp > max) max = temp
+    if (temp !== 0 && temp < min) min = temp
+  })
+  return [ min, max ]
+}
+
 export default {
   name: 'Home',
   data () {
+    // formatterDate(new Date(new Date().getFullYear() + '/01/01'))
+    // formatterDate(new Date())
     return {
-      startTime: formatterDate(new Date(new Date().getFullYear() + '/01/01')),
+      startTime: '',
       startTimeRules: {
         disabledDate (time) {
           // return time.getTime() <= Date.now()
         }
       },
-      endTime: formatterDate(new Date()),
+      endTime: '',
+      initialize: false,
       databaseAlias: '',
       fieldsAlias: null,
       aDataSetId: '',
@@ -140,17 +162,16 @@ export default {
     })
   },
   methods: {
-    request () {
+    async request () {
       const id = this.aDataSetId
       if (!id) return
-      Promise.all([getDatabaseAlias(id), getFieldAlias(id)]).then(([databaseAlias, fieldsAlias]) => {
-        this.databaseAlias = databaseAlias && databaseAlias.data
-        this.fieldsAlias = fieldsAlias && fieldsAlias.data
-        this.fetchData()
-      })
+      const [databaseAlias, fieldsAlias] = await Promise.all([getDatabaseAlias(id), getFieldAlias(id)])
+      this.databaseAlias = databaseAlias && databaseAlias.data
+      this.fieldsAlias = (fieldsAlias && fieldsAlias.data) || []
+      this.refreshTable()
     },
     onSelectDate (date) {
-      this.fetchData()
+      this.refreshTable()
     },
     computeHeight () {
       let target = document.querySelector('.table-container')
@@ -158,10 +179,11 @@ export default {
       let screenHeight = window.innerHeight
       this.tableHeight = screenHeight - top
     },
-    async fetchData () {
-      let self = this
+    async refreshTable () {
+      // let self = this
       let database = this.databaseAlias
       let fields = this.fieldsAlias
+      if (!database || !fields.length) return
       // 按照首期质押日刷选
       let filterFields
       let tableHead = Array.apply(null, {length: queryArr.length})
@@ -177,26 +199,45 @@ export default {
 
         let sidx = queryArr.indexOf(fieldName)
         if (sidx > -1) {
-          tableHead[sidx] = displayName
+          if (displayName === '规模') displayName += '(万元)'
+          let align = inArray(formatMoney, fieldName) || inArray(formatPer, fieldName) || inArray(formatNum, fieldName)
+          tableHead[sidx] = {displayName: displayName, fieldName: fieldName, align: align ? 'right' : 'left'}
           query[sidx] = codeName
         }
       })
-      this.tableHead = tableHead.filter(field => field)
+      this.tableHead = tableHead.filter(({fieldName}) => fieldName)
       sortField = sortField.filter(field => field).join(',')
       query = query.filter(field => field).join(',')
 
-      let sql = `select ${query} 
+      let sql
+      if (this.startTime && this.endTime) {
+        sql = `select ${query} 
         from ${database} 
         WHERE ${filterFields}>='${this.startTime}' 
         AND ${filterFields}<='${this.endTime}' 
         ORDER BY ${sortField}`
-      let tableData = await getDataBySql({dataSetId: self.aDataSetId, sql: sql})
+      } else {
+        sql = `select ${query} from ${database} ORDER BY ${sortField}`
+      }
+      let tableData = await getDataBySql({dataSetId: this.aDataSetId, sql: sql})
       // handle data
-      this.tableData = collapse(tableData.data.rows, 10)
+      this.tableData = collapse(tableData.data.rows)
+      // when initialize , return
+      if (this.initialize) return
+      this.initialize = true
+      const _key = queryArr.indexOf(FIRST_TERM_IMPAWN_DAY)
+      const timeObject = getValue(tableData.data.rows, _key, (value) => {
+        const result = Number(value.replace(/\s|-/g, '').slice(0, 8))
+        if (isNaN(result)) return 0
+        return result
+      })
+      if (!timeObject.length) return
+      this.startTime = (timeObject[0] + '').replace(/(\d{4})(?=(\d{2})+)/g, '$1-')
+      this.endTime = (timeObject[1] + '').replace(/(\d{4})(?=(\d{2})+)/g, '$1-')
     },
     objectSpanMethod ({ row, column, rowIndex, columnIndex }) {
       // 已经在sql里面排好了顺序
-      let label = column.label
+      let label = column['type']
       if (!(inArray(noCollapse, label))) {
         return {
           rowspan: row[row.length - 1][0],
@@ -205,10 +246,11 @@ export default {
       }
     },
     formatOutput (row, column, cellValue, index) {
-      let label = column.label
-      if (inArray(formatDate, label)) return cellValue.replace(/\s|-/g, '').slice(0, 8)
+      let label = column['type']
+      if (inArray(formatDate, label)) return cellValue.replace(/\s/g, '').slice(0, 10)
       if (inArray(formatMoney, label)) return Number(cellValue).toFixed(2).replace(/(\d{1,2})(?=(\d{3})+\.)/g, '$1,')
       if (inArray(formatPer, label)) return Number(cellValue).toFixed(2) + '%'
+      if (inArray(formatNum, label)) return (Number(cellValue) / 10000).toFixed(0)
       return cellValue
     }
   }
@@ -223,6 +265,7 @@ export default {
   height: 40px;
   padding: 0 24px;
   text-align: left;
+  white-space: nowrap;
 }
 .time-picker-interval{
   margin: 0 12px;
@@ -233,12 +276,19 @@ export default {
 .table-wrapper>h4{
   padding: 6px 24px;
   text-align: left;
-  font-size: 20px;
+  font-size: 16px;
 }
 .table-container{
   overflow: auto;
 }
-body.el-date-table{
+.table-container td.reports-cell, .table-container th.reports-cell{
+  padding: 8px 0;
+  font-weight: 400;
+}
+.table-container td.reports-cell>div, .table-container th.reports-cell>div{
+  /* padding: 0 8px; */
+}
+body .el-date-table{
   font-size: 14px;
 }
 </style>
