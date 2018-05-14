@@ -26,28 +26,33 @@
         :style="{'color': fontColor, 'backgroundColor': backgroundColor}">
         {{ tableTitle }}
       </h4>
-      <div class="table-container">
-        <el-table
-          :data="tableData"
-          :span-method="objectSpanMethod"
-          border
-          style="width: 100%;"
-          :height="tableHeight">
-          <template>
-            <el-table-column
-              v-for="(cols, index) in tableHead"
-              v-if="index < tableHead.length - 1"
+      <div class="table-container" :style="{'height': tableHeight + 'px'}">
+        <table v-if="tableHead.length" class="v-table" width="100%" border="0" cellpadding="0" cellspacing="0">
+          <thead>
+            <tr>
+              <th
+                v-for="(cell, index) in tableHead"
+                v-if="index < tableHead.length - 1"
+                :key="index">
+                <div>{{cell.displayName}}</div>
+              </th>
+            </tr>
+            <tr><th class="animate-border" :colspan="tableHead.length - 1"></th></tr>
+          </thead>
+          <tbody v-if="tableData.length">
+            <tr v-for="(rows, i) in tableData"
+              :key="i">
+              <td v-for="(item, index) in rows"
+              v-if="(index < tableHead.length - 1) && (inArray(noCollapse, tableHead[index].fieldName) || rows[rows.length - 1][0])"
               :key="index"
-              :prop="index.toString()"
-              :label="cols.displayName"
-              :type="cols.fieldName"
-              :align="cols.align"
-              header-align="center"
-              className="reports-cell"
-              :formatter="formatOutput">
-            </el-table-column>
-          </template>
-        </el-table>
+              :class="[tableHead[index].align]"
+              :rowspan="inArray(noCollapse, tableHead[index].fieldName) ? 1 : rows[rows.length - 1][0]">
+              <div>{{formatOutput(item, index)}}</div></td>
+            </tr>
+          </tbody>
+          <tbody v-if="!tableData.length"><tr><td :colspan="tableHead.length - 1">没有数据</td></tr></tbody>
+        </table>
+        <div v-else>没有数据</div>
       </div>
     </div>
   </article>
@@ -56,21 +61,20 @@
 <script>
 import 'babel-polyfill'
 import Vue from 'vue'
-import { DatePicker, Table, TableColumn } from 'element-ui'
+import { DatePicker } from 'element-ui'
 import { getDatabaseAlias, getFieldAlias, getDataBySql } from '@/api'
 import { orderList, queryArr, desp, noCollapse, formatDate, formatMoney, formatPer, formatNum, FIRST_TERM_IMPAWN_DAY } from './config'
 Vue.use(DatePicker)
-Vue.use(Table)
-Vue.use(TableColumn)
+// Vue.use(Table)
+// Vue.use(TableColumn)
 
 // const aDataSetId = '8f3535f6-9eb9-47f3-a50f-afd26a762b36'
 
 // 计算表格合并依据
 function collapse (array, index) {
   if (!(array instanceof Array) || !array.length) return []
-  let idx = index || array.length - 1
+  let idx = index || array[0].length - 1
   if (idx === -1) return []
-
   let currentFig = 0
   let currentTimes = 1
   const ilen = array.length
@@ -97,11 +101,6 @@ let resize = function (fn, timer) {
     timeoutId = setTimeout(fn, timer)
   }
 }
-
-// function formatterDate (d, r = '-') {
-//   if (!(d instanceof Date)) return d
-//   return d.getFullYear() + r + (d.getMonth() + 1) + r + d.getDate()
-// }
 
 function inArray (arr = [], item) {
   let idx = arr.indexOf(item)
@@ -144,7 +143,8 @@ export default {
       backgroundColor: '',
       tableHeight: '0',
       tableHead: [],
-      tableData: []
+      tableData: [],
+      noCollapse: noCollapse
     }
   },
   created () {
@@ -159,6 +159,11 @@ export default {
     window.addEventListener('resize', resize(this.computeHeight, 300))
     this.$nextTick(() => {
       this.computeHeight()
+    })
+    let target = document.querySelector('.table-container')
+    target.addEventListener('scroll', function (e) {
+      const scrollTop = this.scrollTop
+      this.querySelector('thead').style.transform = 'translateY(' + scrollTop + 'px)'
     })
   },
   methods: {
@@ -180,7 +185,6 @@ export default {
       this.tableHeight = screenHeight - top
     },
     async refreshTable () {
-      // let self = this
       let database = this.databaseAlias
       let fields = this.fieldsAlias
       if (!database || !fields.length) return
@@ -195,13 +199,14 @@ export default {
         let idx = orderList.indexOf(fieldName)
         if (idx > -1) sortField[idx] = codeName
 
+        // 首期质押日
         if (fieldName === FIRST_TERM_IMPAWN_DAY) filterFields = codeName
 
         let sidx = queryArr.indexOf(fieldName)
         if (sidx > -1) {
-          if (displayName === '规模') displayName += '(万元)'
+          if (displayName === '规模' || inArray(formatNum, fieldName)) displayName += '(万元)'
           let align = inArray(formatMoney, fieldName) || inArray(formatPer, fieldName) || inArray(formatNum, fieldName)
-          tableHead[sidx] = {displayName: displayName, fieldName: fieldName, align: align ? 'right' : 'left'}
+          tableHead[sidx] = {displayName: displayName, fieldName: fieldName, align: align ? 'is-right' : 'is-left'}
           query[sidx] = codeName
         }
       })
@@ -235,23 +240,16 @@ export default {
       this.startTime = (timeObject[0] + '').replace(/(\d{4})(?=(\d{2})+)/g, '$1-')
       this.endTime = (timeObject[1] + '').replace(/(\d{4})(?=(\d{2})+)/g, '$1-')
     },
-    objectSpanMethod ({ row, column, rowIndex, columnIndex }) {
-      // 已经在sql里面排好了顺序
-      let label = column['type']
-      if (!(inArray(noCollapse, label))) {
-        return {
-          rowspan: row[row.length - 1][0],
-          colspan: row[row.length - 1][1]
-        }
-      }
-    },
-    formatOutput (row, column, cellValue, index) {
-      let label = column['type']
-      if (inArray(formatDate, label)) return cellValue.replace(/\s/g, '').slice(0, 10)
-      if (inArray(formatMoney, label)) return Number(cellValue).toFixed(2).replace(/(\d{1,2})(?=(\d{3})+\.)/g, '$1,')
-      if (inArray(formatPer, label)) return Number(cellValue).toFixed(2) + '%'
-      if (inArray(formatNum, label)) return (Number(cellValue) / 10000).toFixed(0)
+    formatOutput (cellValue, index) {
+      let type = this.tableHead[index].fieldName
+      if (inArray(formatDate, type)) return cellValue.replace(/\s/g, '').slice(0, 10)
+      if (inArray(formatMoney, type)) return Number(cellValue).toFixed(2).replace(/(\d{1,2})(?=(\d{3})+\.)/g, '$1,')
+      if (inArray(formatPer, type)) return Number(cellValue).toFixed(2) + '%'
+      if (inArray(formatNum, type)) return (Number(cellValue) / 10000).toFixed(0)
       return cellValue
+    },
+    inArray (arr, item) {
+      return inArray(arr, item)
     }
   }
 }
@@ -278,17 +276,45 @@ export default {
   text-align: left;
   font-size: 16px;
 }
+/**table**/
 .table-container{
   overflow: auto;
+  border: 1px solid #e4e4e4;
+  box-sizing: border-box;
 }
-.table-container td.reports-cell, .table-container th.reports-cell{
-  padding: 8px 0;
+.v-table{
+  width: 100%;
+  font-size: 14px;
+  color: #6f6f6f;
+}
+.v-table th, .v-table td{
+  border-right: 1px solid #e4e4e4;
+  border-bottom: 1px solid #e4e4e4;
+  padding: 8px;
+  vertical-align: middle;
+}
+.v-table th{
+  border-bottom: 0;
+  background: #fff;
+}
+.v-table th>div, .v-table td>div{
+  line-height: 1.5;
+  white-space: nowrap;
   font-weight: 400;
 }
-.table-container td.reports-cell>div, .table-container th.reports-cell>div{
-  /* padding: 0 8px; */
+.v-table .is-left{
+  text-align: left;
 }
-body .el-date-table{
-  font-size: 14px;
+.v-table .is-right{
+  text-align: right;
+}
+.v-table tr:hover{
+  background: #f3f3f3;
+}
+.v-table th.animate-border{
+  height: 1px;
+  padding: 0;
+  border: 0;
+  background: #e4e4e4;
 }
 </style>
