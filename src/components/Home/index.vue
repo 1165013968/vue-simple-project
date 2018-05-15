@@ -51,7 +51,7 @@
           </tbody>
           <tbody v-if="!tableData.length"><tr><td :colspan="tableHead.length - 1">没有数据</td></tr></tbody>
         </table>
-        <div v-else>没有数据</div>
+        <div v-else class="no-data">没有数据</div>
       </div>
     </div>
   </article>
@@ -100,7 +100,9 @@ let resize = function (fn, timer) {
 }
 // judge an element is member of arr
 function inArray (arr = [], item) {
-  let idx = arr.indexOf(item)
+  if (typeof item === 'object') return false
+  let temp = typeof item === 'string' ? item.replace(/^\s|\s$/) : item
+  let idx = arr.indexOf(temp)
   if (idx > -1) return true
   return false
 }
@@ -215,6 +217,7 @@ export default {
     },
     async refreshTable (database = this.databaseAlias, fields = this.fieldsAlias) {
       if (!database || !fields.length) return
+      // 执行一次字段过滤
       let [ filteredQuery, filteredOrder ] = [ queryArr, orderList ]
       if (this.filter.length) {
         this.filter.map((item, index) => {
@@ -257,7 +260,7 @@ export default {
       if (inArray(formatDate, type)) return cellValue.replace(/\s/g, '').slice(0, 10)
       if (inArray(formatMoney, type)) return Number(cellValue).toFixed(2).replace(/(\d{1,2})(?=(\d{3})+\.)/g, '$1,')
       if (inArray(formatPer, type)) return Number(cellValue).toFixed(2) + '%'
-      if (inArray(formatNum, type)) return (Number(cellValue) / 10000).toFixed(0)
+      if (inArray(formatNum, type)) return Number(cellValue).toFixed(0)
       return cellValue
     },
     inArray (arr, item) {
@@ -328,5 +331,12 @@ export default {
   padding: 0;
   border: 0;
   background: #e4e4e4;
+}
+.no-data{
+  height: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  color: #504d4d;
 }
 </style>
