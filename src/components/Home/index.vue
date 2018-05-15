@@ -8,8 +8,7 @@
         value-format="yyyy-MM-dd"
         placeholder="选择日期"
         @change="onSelectDate"
-        size="small"
-        :picker-options="startTimeRules">
+        size="small">
       </el-date-picker>
       <span class="time-picker-interval">~</span>
       <el-date-picker
@@ -65,8 +64,6 @@ import { DatePicker } from 'element-ui'
 import { getDatabaseAlias, getFieldAlias, getDataBySql } from '@/api'
 import { orderList, queryArr, desp, noCollapse, formatDate, formatMoney, formatPer, formatNum, FIRST_TERM_IMPAWN_DAY } from './config'
 Vue.use(DatePicker)
-// Vue.use(Table)
-// Vue.use(TableColumn)
 
 // const aDataSetId = '8f3535f6-9eb9-47f3-a50f-afd26a762b36'
 
@@ -93,7 +90,7 @@ function collapse (array, index) {
   array[currentFig][array[currentFig].length] = [currentTimes, 1]
   return array
 }
-
+// throttle
 let resize = function (fn, timer) {
   let timeoutId = -1
   return function () {
@@ -101,13 +98,13 @@ let resize = function (fn, timer) {
     timeoutId = setTimeout(fn, timer)
   }
 }
-
+// judge an element is member of arr
 function inArray (arr = [], item) {
   let idx = arr.indexOf(item)
   if (idx > -1) return true
   return false
 }
-
+// get max and min value by array[index].key
 const getValue = (arr, key, fn) => {
   if (!arr.length) return []
   let max = -Infinity
@@ -121,26 +118,57 @@ const getValue = (arr, key, fn) => {
   return [ min, max ]
 }
 
+const createQuerySql = (fieldArray, filteredQuery, filteredOrder) => {
+  let filterFields
+  let sortField = Array.apply(null, {length: filteredOrder.length})
+  let tableHead = Array.apply(null, {length: filteredQuery.length})
+  let query = Array.apply(null, {length: filteredQuery.length})
+
+  // 通过真实字段的对比，数据库字段与页面展示字段的映射关系，创建对应的sql查询字符串，对应的表格头部
+  fieldArray.map(({ codeName, fieldName, displayName }, index) => {
+    // 排序字段
+    let idx = filteredOrder.indexOf(fieldName)
+    if (idx > -1) sortField[idx] = codeName
+    // 以首期质押日进行时间刷选
+    if (fieldName === FIRST_TERM_IMPAWN_DAY) filterFields = codeName
+    // 表格头部和查询字段对应
+    let sidx = filteredQuery.indexOf(fieldName)
+    if (sidx > -1) {
+      if (displayName === '规模' || inArray(formatNum, fieldName)) displayName += '(万元)'
+      let align = inArray(formatMoney, fieldName) || inArray(formatPer, fieldName) || inArray(formatNum, fieldName)
+      tableHead[sidx] = {displayName: displayName, fieldName: fieldName, align: align ? 'is-right' : 'is-left'}
+      query[sidx] = codeName
+    }
+  })
+  // tableHead = tableHead.filter(({fieldName}) => fieldName)
+  // sortField = sortField.filter(field => field).join(',')
+  // query = query.filter(field => field).join(',')
+  // 不能以首期质押日进行数据过滤
+  // 不做异常处理，宁愿抛错也不希望数据不正确
+  return {
+    filterFields,
+    tableHead,
+    sortField: sortField.join(','),
+    query: query.join(',')
+  }
+}
+
 export default {
   name: 'Home',
   data () {
-    // formatterDate(new Date(new Date().getFullYear() + '/01/01'))
-    // formatterDate(new Date())
     return {
       startTime: '',
-      startTimeRules: {
-        disabledDate (time) {
-          // return time.getTime() <= Date.now()
-        }
-      },
       endTime: '',
-      initialize: false,
+      // 缓存表名、数据字段名称
       databaseAlias: '',
       fieldsAlias: null,
+      // props from url
       aDataSetId: '',
       tableTitle: '',
       fontColor: '',
       backgroundColor: '',
+      filter: [],
+      // table
       tableHeight: '0',
       tableHead: [],
       tableData: [],
@@ -153,6 +181,7 @@ export default {
     this.backgroundColor = '#' + (query.bgcolor || desp.DEFAULT_BG_COLOR)
     this.fontColor = '#' + (query.color || desp.DEFAULT_FONT_COLOR)
     this.aDataSetId = query.id
+    this.filter = (query.filter || '').split(',')
     this.request()
   },
   mounted () {
@@ -184,36 +213,20 @@ export default {
       let screenHeight = window.innerHeight
       this.tableHeight = screenHeight - top
     },
-    async refreshTable () {
-      let database = this.databaseAlias
-      let fields = this.fieldsAlias
+    async refreshTable (database = this.databaseAlias, fields = this.fieldsAlias) {
       if (!database || !fields.length) return
-      // 按照首期质押日刷选
-      let filterFields
-      let tableHead = Array.apply(null, {length: queryArr.length})
-      let sortField = Array.apply(null, {length: orderList.length})
-      let query = Array.apply(null, {length: queryArr.length})
-
-      // 通过真实字段的对比，数据库字段与页面展示字段的映射关系，创建对应的sql查询字符串，对应的表格头部
-      fields.map(({ codeName, fieldName, displayName }, index) => {
-        let idx = orderList.indexOf(fieldName)
-        if (idx > -1) sortField[idx] = codeName
-
-        // 首期质押日
-        if (fieldName === FIRST_TERM_IMPAWN_DAY) filterFields = codeName
-
-        let sidx = queryArr.indexOf(fieldName)
-        if (sidx > -1) {
-          if (displayName === '规模' || inArray(formatNum, fieldName)) displayName += '(万元)'
-          let align = inArray(formatMoney, fieldName) || inArray(formatPer, fieldName) || inArray(formatNum, fieldName)
-          tableHead[sidx] = {displayName: displayName, fieldName: fieldName, align: align ? 'is-right' : 'is-left'}
-          query[sidx] = codeName
-        }
-      })
-      this.tableHead = tableHead.filter(({fieldName}) => fieldName)
-      sortField = sortField.filter(field => field).join(',')
-      query = query.filter(field => field).join(',')
-
+      let [ filteredQuery, filteredOrder ] = [ queryArr, orderList ]
+      if (this.filter.length) {
+        this.filter.map((item, index) => {
+          let i = filteredQuery.indexOf(item)
+          let j = filteredOrder.indexOf(item)
+          if (i > -1) filteredQuery.splice(i, 1)
+          if (j > -1) filteredOrder.splice(j, 1)
+        })
+      }
+      // 生成sql语句需要的查询，排序，过滤字段,以及与查询字段顺序对应的表格头部
+      const { filterFields, tableHead, sortField, query } = createQuerySql(fields, filteredQuery, filteredOrder)
+      this.tableHead = tableHead
       let sql
       if (this.startTime && this.endTime) {
         sql = `select ${query} 
@@ -225,20 +238,19 @@ export default {
         sql = `select ${query} from ${database} ORDER BY ${sortField}`
       }
       let tableData = await getDataBySql({dataSetId: this.aDataSetId, sql: sql})
-      // handle data
+      // 生成表格数据合并的依据，并保存在数组最后一行
       this.tableData = collapse(tableData.data.rows)
-      // when initialize , return
-      if (this.initialize) return
-      this.initialize = true
-      const _key = queryArr.indexOf(FIRST_TERM_IMPAWN_DAY)
-      const timeObject = getValue(tableData.data.rows, _key, (value) => {
+      // 如果开始时间和结束时间都存在了，那么认为是已经初始化过的，这时不需要写ru时间了
+      if (this.startTime && this.endTime) return
+      const key = filteredQuery.indexOf(FIRST_TERM_IMPAWN_DAY)
+      const [ startTime, endTime ] = getValue(tableData.data.rows, key, (value) => {
         const result = Number(value.replace(/\s|-/g, '').slice(0, 8))
-        if (isNaN(result)) return 0
-        return result
+        return isNaN(result) ? 0 : result
       })
-      if (!timeObject.length) return
-      this.startTime = (timeObject[0] + '').replace(/(\d{4})(?=(\d{2})+)/g, '$1-')
-      this.endTime = (timeObject[1] + '').replace(/(\d{4})(?=(\d{2})+)/g, '$1-')
+      // 格式化为yyyy-mm-dd的时间格式
+      let regExp = /(\d{4})(?=(\d{2})+)/g
+      this.startTime = startTime.toString().replace(regExp, '$1-')
+      this.endTime = endTime.toString().replace(regExp, '$1-')
     },
     formatOutput (cellValue, index) {
       let type = this.tableHead[index].fieldName
